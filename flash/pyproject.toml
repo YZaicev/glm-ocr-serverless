@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "glm-ocr-flash"
+version = "0.1.0"
+description = "GLM-OCR KYC pipeline on RunPod Flash"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "runpod-flash>=1.17.0",
+    "pydantic>=2.7.0,<3.0.0",
+    "pydantic-settings>=2.3.0,<3.0.0",
+]

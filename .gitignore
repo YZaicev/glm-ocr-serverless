@@ -9,5 +9,7 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-.env
+.flash/
+orchestrator/.env
+flash/.env
 .DS_Store

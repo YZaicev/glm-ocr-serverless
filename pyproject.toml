@@ -54,6 +54,7 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = [
     "runpod.*",
+    "runpod_flash.*",
     "fitz.*",
     "pdf2image.*",
 ]
