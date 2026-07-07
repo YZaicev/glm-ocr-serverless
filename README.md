@@ -49,13 +49,22 @@ flowchart LR
 │   ├── schemas/          # Pydantic models
 │   ├── services/         # OCR, loaders, health
 │   └── utils/            # Base64, image, PDF helpers
+├── orchestrator/         # Local KYC orchestrator (FastAPI)
+│   ├── main.py
+│   ├── runpod_client.py
+│   └── config.py
 ├── scripts/
-│   └── local_smoke_test.py
+│   ├── local_smoke_test.py
+│   └── start_orchestrator.sh
 ├── tests/
-├── handler.py            # RunPod entrypoint
-├── download_model.py     # Build-time model download
+├── handler.py            # OCR RunPod entrypoint
+├── llm_handler.py        # LLM RunPod entrypoint
+├── download_model.py     # OCR build-time model download
+├── llm_download_model.py # LLM build-time model download
 ├── start.sh
+├── start_llm.sh
 ├── Dockerfile
+├── Dockerfile.llm
 ├── requirements.txt
 └── pyproject.toml
 ```
@@ -363,6 +372,162 @@ GLM-OCR is ~0.9B parameters; 16 GB VRAM is comfortable for single-request infere
 
 - Set **min workers** to `1` or higher
 - Model loads once per worker on first request / startup
+
+## KYC pipeline (Variant B)
+
+For KYC document parsing, the project uses **two RunPod Serverless endpoints** plus a **local orchestrator**:
+
+```mermaid
+flowchart LR
+    Client[Client / Postman] --> ORCH[Local Orchestrator]
+    ORCH --> OCR_EP[RunPod OCR endpoint]
+    ORCH --> LLM_EP[RunPod LLM endpoint]
+    OCR_EP --> GLM_OCR[GLM-OCR]
+    LLM_EP --> GLM_LLM[GLM-4-9B]
+```
+
+| Component | Image | Handler | Purpose |
+|-----------|-------|---------|---------|
+| OCR worker | `ghcr.io/yzaicev/glm-ocr-serverless:main` | `handler.py` | Image/PDF → raw text |
+| LLM worker | `ghcr.io/yzaicev/glm-ocr-serverless-llm:main` | `llm_handler.py` | OCR text → fixed KYC JSON |
+| Orchestrator | local FastAPI | `orchestrator/main.py` | Calls both endpoints |
+
+### Fixed KYC JSON schema
+
+The LLM worker always returns the same structure (`KycFields`):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `full_name` | string \| null | |
+| `first_name` | string \| null | |
+| `last_name` | string \| null | |
+| `date_of_birth` | string \| null | `YYYY-MM-DD` |
+| `document_number` | string \| null | |
+| `issuing_country` | string \| null | ISO 3166-1 alpha-3 |
+| `nationality` | string \| null | ISO 3166-1 alpha-3 |
+| `expiry_date` | string \| null | `YYYY-MM-DD` |
+| `issue_date` | string \| null | `YYYY-MM-DD` |
+| `address_line` | string \| null | |
+| `city` | string \| null | |
+| `postal_code` | string \| null | |
+| `gender` | string \| null | |
+
+Supported `document_type` values: `passport`, `id_card`, `driver_license`, `proof_of_address`.
+
+Required fields per type are validated in `validation.missing_fields` and `validation.is_complete`.
+
+### Deploy LLM worker (second endpoint)
+
+1. Build/push via GitHub Actions workflow `.github/workflows/publish-ghcr-llm.yml`
+2. Create a **second** RunPod Serverless endpoint with image `ghcr.io/yzaicev/glm-ocr-serverless-llm:main`
+3. GPU: **≥ 24 GB VRAM** recommended for `zai-org/glm-4-9b-chat-hf` in bfloat16
+4. Container disk: **≥ 30 GB**
+5. Handler: `./start_llm.sh` (runs `python -u llm_handler.py`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_MODEL_ID` | `zai-org/glm-4-9b-chat-hf` | GLM text model |
+| `LLM_MAX_NEW_TOKENS` | `1024` | Max generated tokens |
+| `LLM_TEMPERATURE` | `0.1` | Sampling temperature |
+| `HF_HOME` | `/models/hf` | Model cache |
+
+### LLM endpoint request
+
+```json
+{
+  "input": {
+    "task": "kyc_normalize",
+    "document_type": "passport",
+    "country": "RU",
+    "locale": "en",
+    "ocr_pages": [
+      {"page": 1, "text": "PASSPORT ... IVAN IVANOV ..."}
+    ]
+  }
+}
+```
+
+### LLM endpoint response
+
+```json
+{
+  "success": true,
+  "processing_time_ms": 842,
+  "document_type": "passport",
+  "fields": {
+    "full_name": "IVAN IVANOV",
+    "date_of_birth": "1990-01-15",
+    "document_number": "123456789",
+    "nationality": "RUS",
+    "expiry_date": "2030-05-20"
+  },
+  "validation": {
+    "is_complete": true,
+    "missing_fields": [],
+    "confidence": 1.0
+  },
+  "model_id": "zai-org/glm-4-9b-chat-hf"
+}
+```
+
+### Local orchestrator
+
+The orchestrator runs on your machine and calls both RunPod endpoints via `/runsync`.
+
+```bash
+cp orchestrator/.env.example orchestrator/.env
+# Edit orchestrator/.env with RUNPOD_API_KEY and both endpoint IDs
+
+pip install -r orchestrator/requirements.txt
+./scripts/start_orchestrator.sh
+```
+
+Or manually:
+
+```bash
+export $(grep -v '^#' orchestrator/.env | xargs)
+uvicorn orchestrator.main:app --host 0.0.0.0 --port 8080
+```
+
+**Request** — `POST http://localhost:8080/v1/kyc/parse`
+
+```json
+{
+  "image_base64": "data:image/jpeg;base64,...",
+  "document_type": "passport",
+  "country": "RU",
+  "locale": "en"
+}
+```
+
+**Response** — combined OCR + KYC result:
+
+```json
+{
+  "processing_time_ms": 1523,
+  "ocr": {
+    "success": true,
+    "processing_time_ms": 312,
+    "pages": [{"page": 1, "text": "..."}]
+  },
+  "kyc": {
+    "success": true,
+    "processing_time_ms": 842,
+    "document_type": "passport",
+    "fields": { "...": "..." },
+    "validation": { "is_complete": true, "missing_fields": [], "confidence": 1.0 },
+    "model_id": "zai-org/glm-4-9b-chat-hf"
+  }
+}
+```
+
+| Variable | Description |
+|----------|-------------|
+| `RUNPOD_API_KEY` | RunPod API key |
+| `RUNPOD_OCR_ENDPOINT_ID` | OCR endpoint ID |
+| `RUNPOD_LLM_ENDPOINT_ID` | LLM endpoint ID |
+| `ORCHESTRATOR_HOST` | Bind host (default `0.0.0.0`) |
+| `ORCHESTRATOR_PORT` | Bind port (default `8080`) |
 
 ## License
 
