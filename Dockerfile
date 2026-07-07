@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM nvidia/cuda:12.6.0-runtime-ubuntu24.04 AS base
+FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \

@@ -38,7 +38,6 @@ def build_worker_context() -> WorkerContext:
     logger.info("Worker start")
 
     model_manager = ModelManager.get_instance(settings)
-    model_manager.load()
 
     http_client = httpx.Client(
         timeout=settings.request_timeout_seconds,

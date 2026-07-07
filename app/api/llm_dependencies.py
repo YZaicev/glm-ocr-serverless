@@ -29,7 +29,6 @@ def build_llm_worker_context() -> LlmWorkerContext:
     logger.info("LLM worker start")
 
     llm_manager = LlmManager.get_instance(settings)
-    llm_manager.load()
 
     kyc_normalizer = KycNormalizerService(settings=settings, llm_manager=llm_manager)
     health_service = LlmHealthService(

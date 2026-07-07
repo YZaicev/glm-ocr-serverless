@@ -11,7 +11,12 @@ from orchestrator.schemas import KycParseRequest
 
 _settings = FlashSettings()
 
-api = Endpoint(name="glm-kyc-orchestrator", cpu="cpu5c-4-8", workers=(1, 1))
+api = Endpoint(
+    name="glm-kyc-orchestrator",
+    cpu="cpu5c-4-8",
+    workers=_settings.orchestrator_workers,
+    execution_timeout_ms=_settings.orchestrator_timeout_ms,
+)
 
 
 @api.get("/health")

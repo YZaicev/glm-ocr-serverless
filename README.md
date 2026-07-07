@@ -436,8 +436,12 @@ flash deploy
 |----------|---------|-------------|
 | `FLASH_OCR_IMAGE` | `ghcr.io/yzaicev/glm-ocr-serverless:main` | OCR worker image |
 | `FLASH_LLM_IMAGE` | `ghcr.io/yzaicev/glm-ocr-serverless-llm:main` | LLM worker image |
-| `FLASH_WORKERS_MIN` | `0` | Min workers per endpoint |
-| `FLASH_WORKERS_MAX` | `3` | Max workers per endpoint |
+| `FLASH_OCR_WORKERS_MAX` | `2` | Max OCR workers |
+| `FLASH_LLM_WORKERS_MAX` | `1` | Max LLM workers |
+| `FLASH_ORCHESTRATOR_WORKERS_MAX` | `1` | Max orchestrator workers |
+| `FLASH_IDLE_TIMEOUT_SECONDS` | `60` | Idle scale-down delay |
+
+RunPod limits **max workers across all endpoints** (default account quota: **10**). This app uses up to `OCR + LLM + ORCHESTRATOR` max workers (default **4**). Lower values in `flash/.env` if you have other Serverless endpoints, or delete unused endpoints in the RunPod console.
 | `FLASH_OCR_CONTAINER_DISK_GB` | `30` | OCR container disk |
 | `FLASH_LLM_CONTAINER_DISK_GB` | `40` | LLM container disk |
 | `FLASH_OCR_TIMEOUT_MS` | `120000` | OCR job timeout |
