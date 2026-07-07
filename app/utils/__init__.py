@@ -1,14 +1,8 @@
-"""Shared utility helpers."""
+"""Utility package.
 
-from app.utils.base64_utils import decode_base64_payload, parse_data_uri
-from app.utils.image_utils import prepare_image, resize_image_if_needed
+Keep this module free of heavy imports and side effects.
+"""
+
 from app.utils.logging import configure_logging, get_logger
 
-__all__ = [
-    "configure_logging",
-    "get_logger",
-    "decode_base64_payload",
-    "parse_data_uri",
-    "prepare_image",
-    "resize_image_if_needed",
-]
+__all__ = ["configure_logging", "get_logger"]
