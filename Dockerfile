@@ -38,7 +38,7 @@ COPY app/config app/config
 COPY app/utils/logging.py app/utils/logging.py
 COPY app/utils/__init__.py app/utils/__init__.py
 COPY download_model.py .
-RUN python download_model.py
+RUN --mount=type=secret,id=HF_TOKEN python download_model.py
 
 # Copy application code
 COPY app/ app/

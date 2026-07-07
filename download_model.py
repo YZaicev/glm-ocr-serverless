@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from transformers import AutoProcessor, GlmOcrForConditionalGeneration
 
 from app.config.settings import Settings
 from app.utils.logging import configure_logging, get_logger
+
+
+def _get_hf_token() -> str | None:
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    if token:
+        return token.strip() or None
+
+    secret_path = Path("/run/secrets/HF_TOKEN")
+    if secret_path.exists():
+        value = secret_path.read_text(encoding="utf-8").strip()
+        return value or None
+
+    return None
 
 
 def main() -> None:
@@ -22,8 +36,9 @@ def main() -> None:
 
     logger.info("Downloading model (model_id=%s)", settings.model_id)
 
-    AutoProcessor.from_pretrained(settings.model_id)
-    GlmOcrForConditionalGeneration.from_pretrained(settings.model_id)
+    token = _get_hf_token()
+    AutoProcessor.from_pretrained(settings.model_id, token=token)
+    GlmOcrForConditionalGeneration.from_pretrained(settings.model_id, token=token)
 
     logger.info("Model download completed")
 
