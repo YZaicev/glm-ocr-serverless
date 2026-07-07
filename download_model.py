@@ -37,6 +37,7 @@ def main() -> None:
     logger.info("Downloading model (model_id=%s)", settings.model_id)
 
     token = _get_hf_token()
+    logger.info("HF token provided: %s", "yes" if token else "no")
     AutoProcessor.from_pretrained(settings.model_id, token=token)
     GlmOcrForConditionalGeneration.from_pretrained(settings.model_id, token=token)
 
@@ -44,7 +45,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logger = get_logger(__name__)
     try:
         main()
     except Exception:
+        logger.exception("Model download failed")
         sys.exit(1)
