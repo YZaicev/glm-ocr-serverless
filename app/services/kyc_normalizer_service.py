@@ -54,17 +54,25 @@ class KycNormalizerService:
     def _build_prompt(self, job_input: KycNormalizeInput) -> str:
         ocr_text = self._join_ocr_pages(job_input.ocr_pages)
         schema = KycFields.model_json_schema()
+        mrz_hint = ""
+        if job_input.mrz_fields is not None:
+            mrz_hint = (
+                "Known fields from MRZ (high confidence, prefer these values):\n"
+                f"{json.dumps(job_input.mrz_fields.model_dump(), ensure_ascii=True)}\n"
+            )
 
         return (
             "Extract KYC fields from OCR text and return ONLY JSON.\n"
             f"document_type: {job_input.document_type.value}\n"
             f"country: {job_input.country or 'unknown'}\n"
             f"locale: {job_input.locale or 'en'}\n"
+            f"{mrz_hint}"
             "Rules:\n"
             "- dates must be YYYY-MM-DD or null\n"
             "- country/nationality should be ISO 3166-1 alpha-3 when possible\n"
             "- do not add extra keys\n"
             "- use null when value is missing\n"
+            "- fill fields missing from MRZ using OCR text\n"
             f"JSON schema:\n{json.dumps(schema, ensure_ascii=True)}\n"
             "OCR text:\n"
             f"{ocr_text}"

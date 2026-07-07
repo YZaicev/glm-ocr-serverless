@@ -99,6 +99,7 @@ class KycNormalizeInput(BaseModel):
     country: str | None = Field(default=None, description="ISO 3166-1 alpha-2/3")
     locale: str | None = Field(default="en")
     ocr_pages: list[dict[str, object]]
+    mrz_fields: KycFields | None = None
 
 
 class KycNormalizeResponse(BaseModel):

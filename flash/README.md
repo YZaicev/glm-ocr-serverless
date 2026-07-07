@@ -1,12 +1,6 @@
 # GLM-OCR Flash App
 
-Run from the repository root:
-
-```bash
-./scripts/start_flash_dev.sh
-```
-
-Or from this directory:
+Single combined KYC worker (`glm-kyc`).
 
 ```bash
 export PYTHONPATH=..
@@ -14,4 +8,21 @@ flash login
 flash dev --auto-provision
 ```
 
-API: `http://localhost:8888/glm-kyc-orchestrator/v1/kyc/parse`
+Deploy:
+
+```bash
+flash deploy
+```
+
+Call via RunPod `/runsync`:
+
+```json
+{
+  "input": {
+    "task": "kyc_parse",
+    "image": "data:image/jpeg;base64,...",
+    "document_type": "passport",
+    "country": "RU"
+  }
+}
+```

@@ -49,23 +49,14 @@ flowchart LR
 │   ├── schemas/          # Pydantic models
 │   ├── services/         # OCR, loaders, health
 │   └── utils/            # Base64, image, PDF helpers
-├── flash/                # RunPod Flash app (KYC orchestrator)
-│   ├── endpoints.py
-│   ├── kyc_orchestrator.py
-│   └── kyc_service.py
-├── orchestrator/         # Shared KYC request/response schemas
-│   └── schemas.py
-├── scripts/
-│   ├── local_smoke_test.py
-│   ├── start_flash_dev.sh
-│   └── start_orchestrator.sh  # alias → start_flash_dev.sh
-├── tests/
-├── handler.py            # OCR RunPod entrypoint
-├── llm_handler.py        # LLM RunPod entrypoint
-├── download_model.py     # OCR build-time model download
-├── llm_download_model.py # LLM build-time model download
-├── start.sh
-├── start_llm.sh
+├── flash/                # RunPod Flash app (single glm-kyc worker)
+│   ├── kyc_worker.py
+│   └── settings.py
+├── kyc_handler.py        # Combined KYC RunPod entrypoint
+├── download_models.py    # OCR + LLM build-time download
+├── start_kyc.sh
+├── handler.py            # Legacy OCR-only entrypoint
+├── llm_handler.py        # Legacy LLM-only entrypoint
 ├── Dockerfile
 ├── Dockerfile.llm
 ├── requirements.txt
@@ -376,26 +367,22 @@ GLM-OCR is ~0.9B parameters; 16 GB VRAM is comfortable for single-request infere
 - Set **min workers** to `1` or higher
 - Model loads once per worker on first request / startup
 
-## KYC pipeline (Variant B + RunPod Flash)
+## KYC pipeline (unified worker + MRZ + RunPod Flash)
 
-KYC parsing uses **[RunPod Flash](https://docs.runpod.io/flash/overview)** to provision OCR/LLM workers from GHCR Docker images and run a **local orchestrator** via `flash dev`.
+One **GPU Docker image** runs the full pipeline: **GLM-OCR → MRZ parser → Qwen2.5-3B JSON** in a single worker (one cold start).
 
 ```mermaid
 flowchart LR
-    Client[Client / Postman] --> FLASH[flash dev :8888]
-    FLASH --> OCR_EP[Flash OCR endpoint]
-    FLASH --> LLM_EP[Flash LLM endpoint]
-    OCR_EP --> GLM_OCR[GLM-OCR Docker]
-    LLM_EP --> GLM_LLM[GLM-4-9B Docker]
+    Client[Client] --> KYC[glm-kyc endpoint]
+    KYC --> OCR[GLM-OCR]
+    OCR --> MRZ[MRZ parser ICAO 9303]
+    MRZ --> LLM[Qwen2.5-3B]
+    LLM --> JSON[Fixed KYC JSON]
 ```
 
-| Component | Flash name | Docker image | Purpose |
-|-----------|------------|--------------|---------|
-| OCR worker | `glm-ocr` | `ghcr.io/yzaicev/glm-ocr-serverless:main` | Image/PDF → raw text |
-| LLM worker | `glm-llm` | `ghcr.io/yzaicev/glm-ocr-serverless-llm:main` | OCR text → fixed KYC JSON |
-| Orchestrator | `glm-kyc-orchestrator` | local CPU (flash dev) | `POST /v1/kyc/parse` |
-
-Flash manages endpoint provisioning, scaling, and `/runsync` calls — no manual endpoint IDs.
+| Component | Flash name | Image | Models |
+|-----------|------------|-------|--------|
+| KYC worker | `glm-kyc` | `ghcr.io/yzaicev/glm-ocr-serverless:main` | GLM-OCR + Qwen2.5-3B-Instruct |
 
 ### Quick start (Flash)
 
@@ -404,52 +391,76 @@ pip install runpod-flash
 flash login
 
 cp flash/.env.example flash/.env
-# Optional: override FLASH_OCR_IMAGE / FLASH_LLM_IMAGE
-
 ./scripts/start_flash_dev.sh
 ```
 
-Open **http://localhost:8888/docs** for the interactive API explorer.
+**Production:**
 
-**Request** — `POST http://localhost:8888/glm-kyc-orchestrator/v1/kyc/parse`
+```bash
+cd flash && export PYTHONPATH=.. && flash deploy
+```
+
+### API request (`/runsync`)
 
 ```json
 {
-  "image_base64": "data:image/jpeg;base64,...",
-  "document_type": "passport",
-  "country": "RU",
-  "locale": "en"
+  "input": {
+    "task": "kyc_parse",
+    "image": "data:image/jpeg;base64,...",
+    "document_type": "passport",
+    "country": "RU",
+    "locale": "en"
+  }
 }
 ```
 
-**Production deploy:**
+Legacy OCR-only (same worker):
 
-```bash
-cd flash
-export PYTHONPATH=..
-flash deploy
+```json
+{
+  "input": {
+    "image": "data:image/png;base64,..."
+  }
+}
 ```
+
+### Response shape
+
+```json
+{
+  "success": true,
+  "processing_time_ms": 4521,
+  "document_type": "passport",
+  "ocr": { "pages": [{"page": 1, "text": "..."}] },
+  "mrz": {
+    "parsed": true,
+    "valid": true,
+    "format": "TD3",
+    "fields": { "full_name": "...", "document_number": "..." },
+    "confidence": 0.95
+  },
+  "fields": { "full_name": "...", "document_number": "..." },
+  "validation": { "is_complete": true, "missing_fields": [], "confidence": 1.0 },
+  "llm_model_id": "Qwen/Qwen2.5-3B-Instruct"
+}
+```
+
+MRZ fields override LLM when checksums are valid.
 
 ### Flash configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FLASH_OCR_IMAGE` | `ghcr.io/yzaicev/glm-ocr-serverless:main` | OCR worker image |
-| `FLASH_LLM_IMAGE` | `ghcr.io/yzaicev/glm-ocr-serverless-llm:main` | LLM worker image |
-| `FLASH_OCR_WORKERS_MAX` | `2` | Max OCR workers |
-| `FLASH_LLM_WORKERS_MAX` | `1` | Max LLM workers |
-| `FLASH_ORCHESTRATOR_WORKERS_MAX` | `1` | Max orchestrator workers |
-| `FLASH_IDLE_TIMEOUT_SECONDS` | `60` | Idle scale-down delay |
+| `FLASH_KYC_IMAGE` | `ghcr.io/yzaicev/glm-ocr-serverless:main` | Combined worker image |
+| `FLASH_KYC_WORKERS_MAX` | `1` | Max GPU workers |
+| `FLASH_KYC_CONTAINER_DISK_GB` | `40` | Container disk (both models) |
+| `FLASH_KYC_TIMEOUT_MS` | `300000` | Job timeout (5 min) |
+| `FLASH_LLM_MODEL_ID` | `Qwen/Qwen2.5-3B-Instruct` | JSON normalization model |
+| `FLASH_WORKER_TORCH_DTYPE` | `float16` | Inference dtype |
 
-RunPod limits **max workers across all endpoints** (default account quota: **10**). This app uses up to `OCR + LLM + ORCHESTRATOR` max workers (default **4**). Lower values in `flash/.env` if you have other Serverless endpoints, or delete unused endpoints in the RunPod console.
-| `FLASH_OCR_CONTAINER_DISK_GB` | `30` | OCR container disk |
-| `FLASH_LLM_CONTAINER_DISK_GB` | `40` | LLM container disk |
-| `FLASH_OCR_TIMEOUT_MS` | `120000` | OCR job timeout |
-| `FLASH_LLM_TIMEOUT_MS` | `300000` | LLM job timeout |
+GPU: **≥ 16 GB VRAM** (OCR ~2 GB + Qwen2.5-3B ~6 GB in fp16).
 
-Auth: `flash login` (stores API key in `~/.runpod/config.toml`) or `RUNPOD_API_KEY`.
-
-### Fixed KYC JSON schema
+Handler: `./start_kyc.sh` → `kyc_handler.py`
 
 The LLM worker always returns the same structure (`KycFields`):
 
@@ -473,96 +484,16 @@ Supported `document_type` values: `passport`, `id_card`, `driver_license`, `proo
 
 Required fields per type are validated in `validation.missing_fields` and `validation.is_complete`.
 
-### Deploy LLM worker (Docker image)
-
-GHCR images are still built via GitHub Actions (`.github/workflows/publish-ghcr*.yml`). Flash deploys them without manual RunPod console setup.
-
-1. Build/push LLM image: `.github/workflows/publish-ghcr-llm.yml`
-2. Flash provisions endpoint from `FLASH_LLM_IMAGE`
-3. GPU: **≥ 24 GB VRAM** recommended for `zai-org/glm-4-9b-chat-hf`
-4. Handler inside image: `./start_llm.sh`
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_MODEL_ID` | `zai-org/glm-4-9b-chat-hf` | GLM text model |
-| `LLM_MAX_NEW_TOKENS` | `1024` | Max generated tokens |
-| `LLM_TEMPERATURE` | `0.1` | Sampling temperature |
-| `HF_HOME` | `/models/hf` | Model cache |
-
-### LLM endpoint request
-
-```json
-{
-  "input": {
-    "task": "kyc_normalize",
-    "document_type": "passport",
-    "country": "RU",
-    "locale": "en",
-    "ocr_pages": [
-      {"page": 1, "text": "PASSPORT ... IVAN IVANOV ..."}
-    ]
-  }
-}
-```
-
-### LLM endpoint response
-
-```json
-{
-  "success": true,
-  "processing_time_ms": 842,
-  "document_type": "passport",
-  "fields": {
-    "full_name": "IVAN IVANOV",
-    "date_of_birth": "1990-01-15",
-    "document_number": "123456789",
-    "nationality": "RUS",
-    "expiry_date": "2030-05-20"
-  },
-  "validation": {
-    "is_complete": true,
-    "missing_fields": [],
-    "confidence": 1.0
-  },
-  "model_id": "zai-org/glm-4-9b-chat-hf"
-}
-```
-
-### Direct endpoint calls (without orchestrator)
-
-After `flash deploy`, use the queue URLs printed by the CLI, or call `ocr.runsync()` / `llm.runsync()` from Python (see `flash/endpoints.py`).
-
-### Combined response shape
-
-```json
-{
-  "processing_time_ms": 1523,
-  "ocr": {
-    "success": true,
-    "processing_time_ms": 312,
-    "pages": [{"page": 1, "text": "..."}]
-  },
-  "kyc": {
-    "success": true,
-    "processing_time_ms": 842,
-    "document_type": "passport",
-    "fields": { "...": "..." },
-    "validation": { "is_complete": true, "missing_fields": [], "confidence": 1.0 },
-    "model_id": "zai-org/glm-4-9b-chat-hf"
-  }
-}
-```
-
 ### Flash project layout
 
 ```
 flash/
-├── endpoints.py          # glm-ocr + glm-llm (custom Docker images)
-├── kyc_orchestrator.py   # local LB API (/v1/kyc/parse)
-├── kyc_service.py        # OCR → LLM pipeline logic
+├── kyc_worker.py     # single glm-kyc endpoint
 ├── settings.py
 └── .env.example
 ```
+
+Legacy split workers (`handler.py`, `llm_handler.py`, `Dockerfile.llm`) remain for backward compatibility but are no longer used for KYC.
 
 ## License
 

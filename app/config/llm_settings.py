@@ -20,7 +20,7 @@ class LlmSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    model_id: str = Field(default="zai-org/glm-4-9b-chat-hf", alias="LLM_MODEL_ID")
+    model_id: str = Field(default="Qwen/Qwen2.5-3B-Instruct", alias="LLM_MODEL_ID")
     hf_home: str = Field(default="/models/hf", alias="HF_HOME")
     transformers_cache: str = Field(default="/models/hf", alias="TRANSFORMERS_CACHE")
     device: str = Field(default="cuda", alias="DEVICE")

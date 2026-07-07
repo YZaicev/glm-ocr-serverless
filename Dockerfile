@@ -7,7 +7,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/models/hf \
     TRANSFORMERS_CACHE=/models/hf \
-    HF_HUB_DISABLE_TELEMETRY=1
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    LLM_MODEL_ID=Qwen/Qwen2.5-3B-Instruct
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
@@ -17,14 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/local/bin/python
 
-# Use a virtual environment to avoid PEP 668 (externally-managed-environment).
 ENV VIRTUAL_ENV=/opt/venv
 RUN python -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /app
 
-# Install Python dependencies with layer caching
 COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install \
@@ -32,17 +31,15 @@ RUN pip install --upgrade pip \
         --extra-index-url https://download.pytorch.org/whl/cu126 \
         -r requirements.txt
 
-# Download model at build time (never at runtime)
 COPY app/__init__.py app/__init__.py
 COPY app/config app/config
 COPY app/utils/logging.py app/utils/logging.py
 COPY app/utils/__init__.py app/utils/__init__.py
-COPY download_model.py .
-RUN --mount=type=secret,id=HF_TOKEN python download_model.py
+COPY download_models.py .
+RUN --mount=type=secret,id=HF_TOKEN python download_models.py
 
-# Copy application code
 COPY app/ app/
-COPY handler.py start.sh ./
-RUN chmod +x start.sh
+COPY kyc_handler.py handler.py llm_handler.py start_kyc.sh start.sh start_llm.sh ./
+RUN chmod +x start_kyc.sh start.sh start_llm.sh
 
-CMD ["./start.sh"]
+CMD ["./start_kyc.sh"]
