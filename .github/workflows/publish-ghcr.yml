@@ -1,4 +1,4 @@
-name: Build and publish (GHCR)
+name: Build and publish KYC worker (GHCR)
 
 on:
   push:
