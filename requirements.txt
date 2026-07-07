@@ -8,6 +8,7 @@ huggingface_hub>=0.24.0
 
 # ML stack (installed in Docker image with CUDA wheels)
 torch>=2.4.0
+torchvision>=0.19.0
 transformers>=5.3.0
 accelerate>=0.33.0
 pymupdf>=1.24.0,<2.0.0
